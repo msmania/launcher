@@ -15,6 +15,7 @@ LINKER=link
 TARGET=t.exe
 
 OBJS=\
+	$(OBJDIR)\blob.obj\
 	$(OBJDIR)\main.obj\
 
 LIBS=\

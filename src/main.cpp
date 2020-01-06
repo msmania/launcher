@@ -7,8 +7,16 @@
 #include <shobjidl_core.h>
 #include <shlwapi.h>
 #include <shldisp.h>
+#include "blob.h"
 
 void Log(LPCWSTR format, ...) {
+  va_list v;
+  va_start(v, format);
+  vwprintf(format, v);
+  va_end(v);
+}
+
+void LogDebug(LPCWSTR format, ...) {
   WCHAR linebuf[1024];
   va_list v;
   va_start(v, format);
@@ -45,7 +53,7 @@ void LaunchViaShell(const _bstr_t& aPath,
   }
 
   if (hr == S_FALSE) {
-    Log(L"The call succeeded but the window was not found.\n", hr);
+    Log(L"The call succeeded but the window was not found.\n");
     return;
   }
 
@@ -115,10 +123,7 @@ void LaunchViaShell(const _bstr_t& aPath,
 
   // 4. Now call IShellDispatch2::ShellExecute to ask Explorer to execute.
   hr = shellDisp->ShellExecute(aPath, aArgs, aWorkingDir, aVerb, aShowCmd);
-  if (FAILED(hr)) {
-    Log(L"IShellDispatch2::ShellExecute failed - %08x\n", hr);
-    return;
-  }
+  Log(L"IShellDispatch2::ShellExecute returned - %08x\n", hr);
 }
 
 void Launch(LPCWSTR path, bool async) {
@@ -151,19 +156,105 @@ void Launch(LPCWSTR path, bool async) {
   }
 }
 
-void SetProcessMitigationPolicy() {
 #ifndef DOWNLEVEL
+void SetProcessMitigationPolicy() {
   PROCESS_MITIGATION_IMAGE_LOAD_POLICY pol = {};
   pol.PreferSystem32Images = 1;
   if (!::SetProcessMitigationPolicy(ProcessImageLoadPolicy, &pol,
                                     sizeof(pol))) {
     Log(L"SetProcessMitigationPolicy failed - %08x\n", GetLastError());
   }
-#endif
 }
 
+class CodeIntegrityGuard final {
+  Blob attributeListBlob_;
+  LPPROC_THREAD_ATTRIBUTE_LIST attributeList_;
+  DWORD64 policy_;
+
+public:
+  CodeIntegrityGuard()
+    : attributeList_(nullptr),
+      policy_(PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON) {
+    SIZE_T AttributeListSize;
+    if (InitializeProcThreadAttributeList(nullptr,
+                                          /*dwAttributeCount*/1,
+                                          /*dwFlags*/0,
+                                          &AttributeListSize)
+        || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+      return;
+    }
+
+    if (!attributeListBlob_.Alloc(AttributeListSize)) return;
+
+    attributeList_ = attributeListBlob_.As<_PROC_THREAD_ATTRIBUTE_LIST>();
+    if (!InitializeProcThreadAttributeList(attributeList_,
+                                           /*dwAttributeCount*/1,
+                                           /*dwFlags*/0,
+                                           &AttributeListSize)) {
+      attributeList_ = nullptr;
+      Log(L"InitializeProcThreadAttributeList failed - %08x\n", GetLastError());
+      return;
+    }
+
+
+    if (!UpdateProcThreadAttribute(attributeList_,
+                                   /*dwFlags*/0,
+                                   PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+                                   &policy_,
+                                   sizeof(policy_),
+                                   /*lpPreviousValue*/nullptr,
+                                   /*lpReturnSize*/nullptr)) {
+      Log(L"UpdateProcThreadAttribute failed - %08x\n", GetLastError());
+    }
+  }
+
+  ~CodeIntegrityGuard() {
+    if (attributeList_) {
+      DeleteProcThreadAttributeList(attributeList_);
+    }
+  }
+
+  operator LPPROC_THREAD_ATTRIBUTE_LIST() {
+    return attributeList_;
+  }
+};
+
+void LaunchWithCIG(LPCWSTR path) {
+  CodeIntegrityGuard cig;
+
+  STARTUPINFOEXW StartupInfoEx = {};
+  StartupInfoEx.StartupInfo.cb = sizeof(StartupInfoEx);
+  StartupInfoEx.lpAttributeList = cig;
+
+  size_t len = wcslen(path) + 1;
+  if (auto copied = new wchar_t[len]) {
+    memcpy(copied, path, len * sizeof(wchar_t));
+
+    PROCESS_INFORMATION ProcessInformation = {};
+    if (!CreateProcess(nullptr,
+                       copied,
+                       /*lpProcessAttributes*/nullptr,
+                       /*lpThreadAttributes*/nullptr,
+                       /*bInheritHandles*/FALSE,
+                       EXTENDED_STARTUPINFO_PRESENT,
+                       /*lpEnvironment*/nullptr,
+                       /*lpCurrentDirectory*/nullptr,
+                       &StartupInfoEx.StartupInfo,
+                       &ProcessInformation)) {
+      Log(L"CreateProcess failed - %08x\n", GetLastError());
+    }
+
+    WaitForSingleObject(ProcessInformation.hProcess, INFINITE);
+    CloseHandle(ProcessInformation.hThread);
+    CloseHandle(ProcessInformation.hProcess);
+
+    delete [] copied;
+  }
+}
+#endif
+
 void ShowUsage(LPCWSTR path) {
-  wprintf(L"Usage: %s [-m|-s|-a] <path>\n", path);
+  wprintf(L"Usage: %s [-m|-s|-a|-g] <path>\n", path);
 }
 
 int wmain(int argc, wchar_t* argv[]) {
@@ -172,33 +263,45 @@ int wmain(int argc, wchar_t* argv[]) {
     return 1;
   }
 
-  Sleep(1000);
-
   if (argc == 2) {
     Launch(argv[1], /*async*/false);
   }
   else if (wcscmp(argv[1], L"-a") == 0) {
     Launch(argv[2], /*async*/true);
+    wprintf(L"Hit any key to finish...\n");
+    getchar();
   }
   else if (wcscmp(argv[1], L"-s") == 0) {
+#ifndef DOWNLEVEL
     SetProcessMitigationPolicy();
+#endif
     if (SUCCEEDED(::CoInitialize(nullptr))) {
-      _variant_t verb(L"open");
-      LaunchViaShell(argv[2], L"args", verb, L"C:\\mswork", SW_SHOWNORMAL);
+      if (wcscmp(argv[2], L"null") == 0) {
+        _variant_t varErr(DISP_E_PARAMNOTFOUND, VT_ERROR);
+        LaunchViaShell(argv[3], L"", varErr, L"C:\\mswork", SW_SHOWNORMAL);
+      }
+      else {
+        _variant_t verb(argv[2]);
+        LaunchViaShell(argv[3], L"", verb, L"C:\\mswork", SW_SHOWNORMAL);
+      }
       CoUninitialize();
     }
   }
+#ifndef DOWNLEVEL
   else if (wcscmp(argv[1], L"-m") == 0) {
     SetProcessMitigationPolicy();
     Launch(argv[2], /*async*/true);
+    wprintf(L"Hit any key to finish...\n");
+    getchar();
   }
+  else if (wcscmp(argv[1], L"-g") == 0) {
+    LaunchWithCIG(argv[2]);
+  }
+#endif
   else {
     ShowUsage(argv[0]);
     return 1;
   }
-
-  wprintf(L"Hit any key to finish...\n");
-  getchar();
 
   return 0;
 }
