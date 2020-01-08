@@ -1,3 +1,6 @@
+#include <string>
+#include <vector>
+
 #include <stdio.h>
 #include <windows.h>
 #include <atlbase.h>
@@ -7,6 +10,7 @@
 #include <shobjidl_core.h>
 #include <shlwapi.h>
 #include <shldisp.h>
+#include "args.h"
 #include "blob.h"
 
 void Log(LPCWSTR format, ...) {
@@ -126,36 +130,6 @@ void LaunchViaShell(const _bstr_t& aPath,
   Log(L"IShellDispatch2::ShellExecute returned - %08x\n", hr);
 }
 
-void Launch(LPCWSTR path, bool async) {
-  SHELLEXECUTEINFOW seinfo{};
-  seinfo.cbSize = sizeof(SHELLEXECUTEINFOW);
-  seinfo.fMask = async ? SEE_MASK_ASYNCOK : (SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI);
-  seinfo.hwnd = nullptr;
-  seinfo.lpVerb = nullptr;
-  seinfo.lpFile = path;
-  seinfo.lpParameters = nullptr;
-  seinfo.lpDirectory = nullptr;
-  seinfo.nShow = SW_SHOWNORMAL;
-
-  // Use the directory of the file we're launching as the working
-  // directory. That way if we have a self extracting EXE it won't
-  // suggest to extract to the install directory.
-  WCHAR workingDirectory[MAX_PATH + 1] = {L'\0'};
-  wcsncpy(workingDirectory, path, MAX_PATH);
-  if (PathRemoveFileSpecW(workingDirectory)) {
-    seinfo.lpDirectory = workingDirectory;
-  } else {
-    Log(L"Could not set working directory for launched file.");
-  }
-
-  BOOL ret = ::ShellExecuteExW(&seinfo);
-  wprintf(L"ShellExecuteExW returned %d\n", ret);
-  wprintf(L"hInstApp %p\n", seinfo.hInstApp);
-  if (!ret) {
-    wprintf(L"ShellExecuteEx failed with %08x\n", ::GetLastError());
-  }
-}
-
 #ifndef DOWNLEVEL
 void SetProcessMitigationPolicy() {
   PROCESS_MITIGATION_IMAGE_LOAD_POLICY pol = {};
@@ -218,90 +192,101 @@ public:
     return attributeList_;
   }
 };
+#endif
 
-void LaunchWithCIG(LPCWSTR path) {
-  CodeIntegrityGuard cig;
+void DoCreateProcess(const wchar_t *executable,
+                     const std::wstring &command,
+                     DWORD creationFlags,
+                     LPSTARTUPINFO si) {
+  if (auto copied = new wchar_t[command.size() + 1]) {
+    command.copy(copied, command.size());
+    copied[command.size()] = 0;
 
-  STARTUPINFOEXW StartupInfoEx = {};
-  StartupInfoEx.StartupInfo.cb = sizeof(StartupInfoEx);
-  StartupInfoEx.lpAttributeList = cig;
-
-  size_t len = wcslen(path) + 1;
-  if (auto copied = new wchar_t[len]) {
-    memcpy(copied, path, len * sizeof(wchar_t));
-
-    PROCESS_INFORMATION ProcessInformation = {};
-    if (!CreateProcess(nullptr,
+    PROCESS_INFORMATION pi = {};
+    if (!CreateProcess(executable,
                        copied,
                        /*lpProcessAttributes*/nullptr,
                        /*lpThreadAttributes*/nullptr,
                        /*bInheritHandles*/FALSE,
-                       EXTENDED_STARTUPINFO_PRESENT,
+                       creationFlags,
                        /*lpEnvironment*/nullptr,
                        /*lpCurrentDirectory*/nullptr,
-                       &StartupInfoEx.StartupInfo,
-                       &ProcessInformation)) {
+                       si,
+                       &pi)) {
       Log(L"CreateProcess failed - %08x\n", GetLastError());
     }
 
-    WaitForSingleObject(ProcessInformation.hProcess, INFINITE);
-    CloseHandle(ProcessInformation.hThread);
-    CloseHandle(ProcessInformation.hProcess);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
 
     delete [] copied;
   }
 }
-#endif
-
-void ShowUsage(LPCWSTR path) {
-  wprintf(L"Usage: %s [-m|-s|-a|-g] <path>\n", path);
-}
 
 int wmain(int argc, wchar_t* argv[]) {
-  if (argc < 2) {
-    ShowUsage(argv[0]);
-    return 1;
+  Args args(argc, argv);
+  if (!args) return 1;
+
+#ifndef DOWNLEVEL
+  if (args.MitigationPolicy()) SetProcessMitigationPolicy();
+#endif
+
+  switch (args.GetMethod()) {
+  case Args::Api::ShellExecute: {
+    auto commandArgs = args.GetCommandArgs();
+    SHELLEXECUTEINFOW seinfo = {sizeof(seinfo)};
+    seinfo.fMask = args.Async()
+      ? SEE_MASK_ASYNCOK
+      : (SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI);
+    seinfo.lpFile = args.GetExecutable();
+    seinfo.lpParameters = commandArgs.c_str();
+    seinfo.nShow = SW_SHOWNORMAL;
+
+    BOOL ret = ::ShellExecuteExW(&seinfo);
+    Log(L"ShellExecuteExW returned %d hInstApp=%p\n", ret, seinfo.hInstApp);
+    if (!ret) Log(L"ShellExecuteEx failed with %08x\n", ::GetLastError());
+    break;
   }
 
-  if (argc == 2) {
-    Launch(argv[1], /*async*/false);
-  }
-  else if (wcscmp(argv[1], L"-a") == 0) {
-    Launch(argv[2], /*async*/true);
-    wprintf(L"Hit any key to finish...\n");
-    getchar();
-  }
-  else if (wcscmp(argv[1], L"-s") == 0) {
-#ifndef DOWNLEVEL
-    SetProcessMitigationPolicy();
-#endif
-    if (SUCCEEDED(::CoInitialize(nullptr))) {
-      if (wcscmp(argv[2], L"null") == 0) {
-        _variant_t varErr(DISP_E_PARAMNOTFOUND, VT_ERROR);
-        LaunchViaShell(argv[3], L"", varErr, L"C:\\mswork", SW_SHOWNORMAL);
-      }
-      else {
-        _variant_t verb(argv[2]);
-        LaunchViaShell(argv[3], L"", verb, L"C:\\mswork", SW_SHOWNORMAL);
-      }
-      CoUninitialize();
+  case Args::Api::ShellExecuteByExplorer:
+    if (SUCCEEDED(CoInitialize(nullptr))) {
+      auto commandArgs = args.GetCommandArgs();
+      _variant_t varErr(DISP_E_PARAMNOTFOUND, VT_ERROR);
+
+      LaunchViaShell(
+        args.GetExecutable(),
+        commandArgs.c_str(),
+        varErr,
+        varErr,
+        SW_SHOWNORMAL);
     }
-  }
-#ifndef DOWNLEVEL
-  else if (wcscmp(argv[1], L"-m") == 0) {
-    SetProcessMitigationPolicy();
-    Launch(argv[2], /*async*/true);
-    wprintf(L"Hit any key to finish...\n");
-    getchar();
-  }
-  else if (wcscmp(argv[1], L"-g") == 0) {
-    LaunchWithCIG(argv[2]);
-  }
-#endif
-  else {
-    ShowUsage(argv[0]);
-    return 1;
-  }
+    CoUninitialize();
+    break;
 
+  case Args::Api::CreateProcess:
+#ifndef DOWNLEVEL
+    if (args.Cig()) {
+      CodeIntegrityGuard cig;
+
+      STARTUPINFOEX sie = {};
+      sie.StartupInfo.cb = sizeof(sie);
+      sie.lpAttributeList = cig;
+
+      DoCreateProcess(args.GetExecutable(),
+                      args.GetFullCommand(),
+                      EXTENDED_STARTUPINFO_PRESENT,
+                      &sie.StartupInfo);
+    } else
+#endif
+    {
+      STARTUPINFO si = {sizeof(si)};
+      DoCreateProcess(args.GetExecutable(),
+                      args.GetFullCommand(),
+                      0,
+                      &si);
+    }
+    break;
+  }
   return 0;
 }

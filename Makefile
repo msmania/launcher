@@ -4,6 +4,9 @@ ARCH=amd64
 ARCH=x86
 !ENDIF
 
+GTEST_SRC_DIR=D:\src\googletest
+GTEST_BUILD_DIR=D:\src\googletest\build\$(ARCH)
+
 OUTDIR=bin\$(ARCH)
 OBJDIR=obj\$(ARCH)
 SRCDIR=src
@@ -12,20 +15,25 @@ CC=cl
 RD=rd/s/q
 RM=del/q
 LINKER=link
-TARGET=t.exe
+TARGET=la.exe
+TEST_TARGET=t.exe
 
 OBJS=\
+	$(OBJDIR)\args.obj\
 	$(OBJDIR)\blob.obj\
 	$(OBJDIR)\main.obj\
 
+TEST_OBJS=\
+	$(OBJDIR)\args.obj\
+	$(OBJDIR)\testmain.obj\
+
 LIBS=\
-	ole32.lib\
-	shell32.lib\
-	shlwapi.lib\
-	user32.lib\
 	comsuppw.lib\
 
-# warning C4100: unreferenced formal parameter
+TEST_LIBS=\
+	gtest.lib\
+	gtest_main.lib\
+
 CFLAGS=\
 	/nologo\
 	/c\
@@ -38,22 +46,24 @@ CFLAGS=\
 	/EHsc\
 	/Fo"$(OBJDIR)\\"\
 	/Fd"$(OBJDIR)\\"\
-	/wd4100\
-	/guard:cf\
+	/I"$(GTEST_SRC_DIR)\googletest\include"\
+	/I"$(GTEST_SRC_DIR)\googlemock\include"\
 
 LFLAGS=\
 	/NOLOGO\
 	/DEBUG\
 	/SUBSYSTEM:CONSOLE\
-#	/GUARD:CF\
-#	/DYNAMICBASE:NO\
-#	/BASE:0x200000000\
+	/LIBPATH:"$(GTEST_BUILD_DIR)\lib\Release"\
 
-all: $(OUTDIR)\$(TARGET)
+all: $(OUTDIR)\$(TARGET) $(OUTDIR)\$(TEST_TARGET)
 
 $(OUTDIR)\$(TARGET): $(OBJS)
 	@if not exist $(OUTDIR) mkdir $(OUTDIR)
 	$(LINKER) $(LFLAGS) $(LIBS) /PDB:"$(@R).pdb" /OUT:$@ $**
+
+$(OUTDIR)\$(TEST_TARGET): $(TEST_OBJS)
+	@if not exist $(OUTDIR) mkdir $(OUTDIR)
+	$(LINKER) $(LFLAGS) $(TEST_LIBS) /PDB:"$(@R).pdb" /OUT:$@ $**
 
 {$(SRCDIR)}.cpp{$(OBJDIR)}.obj:
 	@if not exist $(OBJDIR) mkdir $(OBJDIR)
@@ -64,3 +74,6 @@ clean:
 	@if exist $(OUTDIR)\$(TARGET) $(RM) $(OUTDIR)\$(TARGET)
 	@if exist $(OUTDIR)\$(TARGET:exe=ilk) $(RM) $(OUTDIR)\$(TARGET:exe=ilk)
 	@if exist $(OUTDIR)\$(TARGET:exe=pdb) $(RM) $(OUTDIR)\$(TARGET:exe=pdb)
+	@if exist $(OUTDIR)\$(TEST_TARGET) $(RM) $(OUTDIR)\$(TEST_TARGET)
+	@if exist $(OUTDIR)\$(TEST_TARGET:exe=ilk) $(RM) $(OUTDIR)\$(TEST_TARGET:exe=ilk)
+	@if exist $(OUTDIR)\$(TEST_TARGET:exe=pdb) $(RM) $(OUTDIR)\$(TEST_TARGET:exe=pdb)
