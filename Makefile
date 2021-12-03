@@ -16,6 +16,7 @@ RD=rd/s/q
 RM=del/q
 LINKER=link
 TARGET=la.exe
+TARGET_NESTED=nested.exe
 TEST_TARGET=t.exe
 
 OBJS=\
@@ -23,12 +24,16 @@ OBJS=\
 	$(OBJDIR)\blob.obj\
 	$(OBJDIR)\main.obj\
 
+OBJS_NESTED=\
+	$(OBJDIR)\nestedmain.obj\
+
 TEST_OBJS=\
 	$(OBJDIR)\args.obj\
 	$(OBJDIR)\testmain.obj\
 
 LIBS=\
 	comsuppw.lib\
+	user32.lib\
 
 TEST_LIBS=\
 	gtest.lib\
@@ -52,18 +57,21 @@ CFLAGS=\
 LFLAGS=\
 	/NOLOGO\
 	/DEBUG\
-	/SUBSYSTEM:CONSOLE\
 	/LIBPATH:"$(GTEST_BUILD_DIR)\lib\Release"\
 
-all: $(OUTDIR)\$(TARGET) $(OUTDIR)\$(TEST_TARGET)
+all: $(OUTDIR)\$(TARGET) $(OUTDIR)\$(TARGET_NESTED) $(OUTDIR)\$(TEST_TARGET)
 
 $(OUTDIR)\$(TARGET): $(OBJS)
 	@if not exist $(OUTDIR) mkdir $(OUTDIR)
-	$(LINKER) $(LFLAGS) $(LIBS) /PDB:"$(@R).pdb" /OUT:$@ $**
+	$(LINKER) $(LFLAGS) /SUBSYSTEM:CONSOLE $(LIBS) /PDB:"$(@R).pdb" /OUT:$@ $**
+
+$(OUTDIR)\$(TARGET_NESTED): $(OBJS_NESTED)
+	@if not exist $(OUTDIR) mkdir $(OUTDIR)
+	$(LINKER) $(LFLAGS) /SUBSYSTEM:WINDOWS $(LIBS) /PDB:"$(@R).pdb" /OUT:$@ $**
 
 $(OUTDIR)\$(TEST_TARGET): $(TEST_OBJS)
 	@if not exist $(OUTDIR) mkdir $(OUTDIR)
-	$(LINKER) $(LFLAGS) $(TEST_LIBS) /PDB:"$(@R).pdb" /OUT:$@ $**
+	$(LINKER) $(LFLAGS) /SUBSYSTEM:CONSOLE $(TEST_LIBS) /PDB:"$(@R).pdb" /OUT:$@ $**
 
 {$(SRCDIR)}.cpp{$(OBJDIR)}.obj:
 	@if not exist $(OBJDIR) mkdir $(OBJDIR)

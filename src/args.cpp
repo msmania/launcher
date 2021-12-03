@@ -13,6 +13,7 @@ void Args::ShowUsage() {
     L"\n  --async               launch a process asynchronously"
     L"\n  --policy              turn on PreferSystem32Images before launching a process"
     L"\n  --cig                 launch a process with CIG"
+    L"\n  --job                 launch a process with job"
     L"\n",
     errorMessage_.c_str());
 }
@@ -70,6 +71,8 @@ Args::Args(int argc, const wchar_t *const argv[]) {
       flags_.MitigationPolicy = 1;
     else if (wcscmp(argv[i], L"--cig") == 0)
       flags_.Cig = 1;
+    else if (wcscmp(argv[i], L"--job") == 0)
+      flags_.Job = 1;
     else if (MatchMethod(argv[i]))
       ;
     else {
@@ -89,6 +92,8 @@ Args::Args(int argc, const wchar_t *const argv[]) {
     errorMessage_ = L"CreateProcess must be synchronous.\n\n";
   else if (api_ == Api::ShellExecuteByExplorer && !flags_.Async)
     errorMessage_ = L"ShellExecuteByExplorer must be asynchronous.\n\n";
+  else if (api_ != Api::CreateProcess && flags_.Job)
+    errorMessage_ = L"Job works with CreateProcess only.\n\n";
 
   if (errorMessage_.empty())
     ok_ = true;
@@ -113,7 +118,15 @@ std::wstring Args::GetFullCommand() const {
   std::wstring ret;
   for (int i = 0; i < commands_.size(); ++i) {
     if (i > 0) ret += ' ';
-    ret += commands_[i];
+
+    if (wcschr(commands_[i], L' ')) {
+      ret += L"\"";
+      ret += commands_[i];
+      ret += L"\"";
+    }
+    else {
+      ret += commands_[i];
+    }
   }
   return ret;
 }

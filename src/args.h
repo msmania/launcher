@@ -19,6 +19,7 @@ private:
       uint32_t Async : 1;
       uint32_t MitigationPolicy : 1;
       uint32_t Cig : 1;
+      uint32_t Job : 1;
     } flags_;
     uint32_t all_ = 0;
   };
@@ -40,6 +41,7 @@ public:
   bool Async() const {return flags_.Async;};
   bool MitigationPolicy() const {return flags_.MitigationPolicy;};
   bool Cig() const {return flags_.Cig;};
+  bool Job() const {return flags_.Job;};
 
   const wchar_t *GetExecutable() const;
   std::wstring GetCommandArgs() const;

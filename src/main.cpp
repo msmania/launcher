@@ -1,17 +1,19 @@
+#include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include <stdio.h>
 #include <windows.h>
+
+#include "args.h"
+#include "blob.h"
 #include <atlbase.h>
 #include <comutil.h>
 #include <exdisp.h>
-#include <shlobj.h>
-#include <shobjidl_core.h>
-#include <shlwapi.h>
 #include <shldisp.h>
-#include "args.h"
-#include "blob.h"
+#include <shlobj.h>
+#include <shlwapi.h>
+#include <shobjidl_core.h>
 
 void Log(LPCWSTR format, ...) {
   va_list v;
@@ -29,11 +31,9 @@ void LogDebug(LPCWSTR format, ...) {
   OutputDebugString(linebuf);
 }
 
-void LaunchViaShell(const _bstr_t& aPath,
-                    const _variant_t& aArgs,
-                    const _variant_t& aVerb,
-                    const _variant_t& aWorkingDir,
-                    const _variant_t& aShowCmd) {
+void LaunchViaShell(const _bstr_t &aPath, const _variant_t &aArgs,
+                    const _variant_t &aVerb, const _variant_t &aWorkingDir,
+                    const _variant_t &aShowCmd) {
   // NB: Explorer may be a local server, not an inproc server
   CComPtr<IShellWindows> shellWindows;
   HRESULT hr = shellWindows.CoCreateInstance(
@@ -49,8 +49,7 @@ void LaunchViaShell(const _bstr_t& aPath,
   long hwnd;
   CComPtr<IDispatch> dispDesktop;
   hr = shellWindows->FindWindowSW(&loc, &empty, SWC_DESKTOP, &hwnd,
-                                  SWFO_NEEDDISPATCH,
-                                  &dispDesktop);
+                                  SWFO_NEEDDISPATCH, &dispDesktop);
   if (FAILED(hr)) {
     Log(L"IShellWindows::FindWindowSW failed - %08x\n", hr);
     return;
@@ -63,7 +62,7 @@ void LaunchViaShell(const _bstr_t& aPath,
 
   CComPtr<IServiceProvider> servProv;
   hr = dispDesktop->QueryInterface(IID_IServiceProvider,
-                                   reinterpret_cast<void**>(&servProv));
+                                   reinterpret_cast<void **>(&servProv));
   if (!servProv) {
     Log(L"QueryInterface(IServiceProvider) failed - %08x\n", hr);
     return;
@@ -71,7 +70,7 @@ void LaunchViaShell(const _bstr_t& aPath,
 
   CComPtr<IShellBrowser> browser;
   hr = servProv->QueryService(SID_STopLevelBrowser, IID_IShellBrowser,
-                              reinterpret_cast<void**>(&browser));
+                              reinterpret_cast<void **>(&browser));
   if (FAILED(hr)) {
     Log(L"IServiceProvider::QueryService failed - %08x\n", hr);
     return;
@@ -87,7 +86,7 @@ void LaunchViaShell(const _bstr_t& aPath,
   // 2. Get the automation object for the desktop.
   CComPtr<IDispatch> dispView;
   hr = activeShellView->GetItemObject(SVGIO_BACKGROUND, IID_IDispatch,
-                                      reinterpret_cast<void**>(&dispView));
+                                      reinterpret_cast<void **>(&dispView));
   if (FAILED(hr)) {
     Log(L"IShellView::GetItemObject failed - %08x\n", hr);
     return;
@@ -95,7 +94,7 @@ void LaunchViaShell(const _bstr_t& aPath,
 
   CComPtr<IShellFolderViewDual> folderView;
   hr = dispView->QueryInterface(IID_IShellFolderViewDual,
-                                reinterpret_cast<void**>(&folderView));
+                                reinterpret_cast<void **>(&folderView));
   if (FAILED(hr)) {
     Log(L"IDispatch::QueryInterface failed - %08x\n", hr);
     return;
@@ -111,7 +110,7 @@ void LaunchViaShell(const _bstr_t& aPath,
 
   CComPtr<IShellDispatch2> shellDisp;
   hr = dispShell->QueryInterface(IID_IShellDispatch2,
-                                 reinterpret_cast<void**>(&shellDisp));
+                                 reinterpret_cast<void **>(&shellDisp));
   if (FAILED(hr)) {
     Log(L"IDispatch::QueryInterface failed - %08x\n", hr);
     return;
@@ -147,37 +146,35 @@ class CodeIntegrityGuard final {
 
 public:
   CodeIntegrityGuard()
-    : attributeList_(nullptr),
-      policy_(PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON) {
+      : attributeList_(nullptr),
+        policy_(
+            PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON) {
     SIZE_T AttributeListSize;
     if (InitializeProcThreadAttributeList(nullptr,
-                                          /*dwAttributeCount*/1,
-                                          /*dwFlags*/0,
-                                          &AttributeListSize)
-        || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+                                          /*dwAttributeCount*/ 1,
+                                          /*dwFlags*/ 0, &AttributeListSize) ||
+        GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
       return;
     }
 
-    if (!attributeListBlob_.Alloc(AttributeListSize)) return;
+    if (!attributeListBlob_.Alloc(AttributeListSize))
+      return;
 
     attributeList_ = attributeListBlob_.As<_PROC_THREAD_ATTRIBUTE_LIST>();
     if (!InitializeProcThreadAttributeList(attributeList_,
-                                           /*dwAttributeCount*/1,
-                                           /*dwFlags*/0,
-                                           &AttributeListSize)) {
+                                           /*dwAttributeCount*/ 1,
+                                           /*dwFlags*/ 0, &AttributeListSize)) {
       attributeList_ = nullptr;
       Log(L"InitializeProcThreadAttributeList failed - %08x\n", GetLastError());
       return;
     }
 
-
     if (!UpdateProcThreadAttribute(attributeList_,
-                                   /*dwFlags*/0,
+                                   /*dwFlags*/ 0,
                                    PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
-                                   &policy_,
-                                   sizeof(policy_),
-                                   /*lpPreviousValue*/nullptr,
-                                   /*lpReturnSize*/nullptr)) {
+                                   &policy_, sizeof(policy_),
+                                   /*lpPreviousValue*/ nullptr,
+                                   /*lpReturnSize*/ nullptr)) {
       Log(L"UpdateProcThreadAttribute failed - %08x\n", GetLastError());
     }
   }
@@ -188,64 +185,87 @@ public:
     }
   }
 
-  operator LPPROC_THREAD_ATTRIBUTE_LIST() {
-    return attributeList_;
-  }
+  operator LPPROC_THREAD_ATTRIBUTE_LIST() { return attributeList_; }
 };
 #endif
 
-void DoCreateProcess(const wchar_t *executable,
-                     const std::wstring &command,
-                     DWORD creationFlags,
-                     LPSTARTUPINFO si) {
-  if (auto copied = new wchar_t[command.size() + 1]) {
-    command.copy(copied, command.size());
-    copied[command.size()] = 0;
+struct HandleCloser {
+  typedef HANDLE pointer;
+  void operator()(HANDLE h) {
+    if (h) {
+      ::CloseHandle(h);
+    }
+  }
+};
 
-    PROCESS_INFORMATION pi = {};
-    if (!CreateProcess(executable,
-                       copied,
-                       /*lpProcessAttributes*/nullptr,
-                       /*lpThreadAttributes*/nullptr,
-                       /*bInheritHandles*/FALSE,
-                       creationFlags,
-                       /*lpEnvironment*/nullptr,
-                       /*lpCurrentDirectory*/nullptr,
-                       si,
-                       &pi)) {
-      Log(L"CreateProcess failed - %08x\n", GetLastError());
+void DoCreateProcess(const wchar_t *executable, const std::wstring &command,
+                     DWORD creationFlags, LPSTARTUPINFO si, bool createJob) {
+  std::unique_ptr<wchar_t[]> copied(new wchar_t[command.size() + 1]);
+  if (!copied) {
+    return;
+  }
+
+  command.copy(copied.get(), command.size());
+  copied[command.size()] = 0;
+
+  PROCESS_INFORMATION pi = {};
+  if (!CreateProcess(executable, copied.get(),
+                     /*lpProcessAttributes*/ nullptr,
+                     /*lpThreadAttributes*/ nullptr,
+                     /*bInheritHandles*/ FALSE, creationFlags,
+                     /*lpEnvironment*/ nullptr,
+                     /*lpCurrentDirectory*/ nullptr, si, &pi)) {
+    Log(L"CreateProcess failed - %08x\n", GetLastError());
+  }
+
+  std::unique_ptr<HANDLE, HandleCloser> job, thread(pi.hThread),
+      process(pi.hProcess);
+
+  if (createJob) {
+    job.reset(::CreateJobObjectW(/*lpJobAttributes*/ nullptr,
+                                 /*lpName*/ nullptr));
+
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobInfo = {};
+    jobInfo.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+
+    if (!::SetInformationJobObject(job.get(), JobObjectExtendedLimitInformation,
+                                   &jobInfo, sizeof(jobInfo))) {
+      Log(L"SetInformationJobObject failed - %08lx\n", ::GetLastError());
     }
 
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-
-    delete [] copied;
+    if (!::AssignProcessToJobObject(job.get(), process.get())) {
+      Log(L"AssignProcessToJobObject failed - %08lx\n", ::GetLastError());
+    }
   }
+
+  WaitForSingleObject(process.get(), INFINITE);
 }
 
-int wmain(int argc, wchar_t* argv[]) {
+int wmain(int argc, wchar_t *argv[]) {
   Args args(argc, argv);
-  if (!args) return 1;
+  if (!args)
+    return 1;
 
 #ifndef DOWNLEVEL
-  if (args.MitigationPolicy()) SetProcessMitigationPolicy();
+  if (args.MitigationPolicy())
+    SetProcessMitigationPolicy();
 #endif
 
   switch (args.GetMethod()) {
   case Args::Api::ShellExecute: {
     auto commandArgs = args.GetCommandArgs();
     SHELLEXECUTEINFOW seinfo = {sizeof(seinfo)};
-    seinfo.fMask = args.Async()
-      ? SEE_MASK_ASYNCOK
-      : (SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI);
+    seinfo.fMask = args.Async() ? SEE_MASK_ASYNCOK
+                                : (SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI);
     seinfo.lpFile = args.GetExecutable();
     seinfo.lpParameters = commandArgs.c_str();
     seinfo.nShow = SW_SHOWNORMAL;
 
     BOOL ret = ::ShellExecuteExW(&seinfo);
     Log(L"ShellExecuteExW returned %d hInstApp=%p\n", ret, seinfo.hInstApp);
-    if (!ret) Log(L"ShellExecuteEx failed with %08x\n", ::GetLastError());
+    if (!ret)
+      Log(L"ShellExecuteEx failed with %08x\n", ::GetLastError());
     break;
   }
 
@@ -254,12 +274,8 @@ int wmain(int argc, wchar_t* argv[]) {
       auto commandArgs = args.GetCommandArgs();
       _variant_t varErr(DISP_E_PARAMNOTFOUND, VT_ERROR);
 
-      LaunchViaShell(
-        args.GetExecutable(),
-        commandArgs.c_str(),
-        varErr,
-        varErr,
-        SW_SHOWNORMAL);
+      LaunchViaShell(args.GetExecutable(), commandArgs.c_str(), varErr, varErr,
+                     SW_SHOWNORMAL);
     }
     CoUninitialize();
     break;
@@ -273,18 +289,15 @@ int wmain(int argc, wchar_t* argv[]) {
       sie.StartupInfo.cb = sizeof(sie);
       sie.lpAttributeList = cig;
 
-      DoCreateProcess(args.GetExecutable(),
-                      args.GetFullCommand(),
-                      EXTENDED_STARTUPINFO_PRESENT,
-                      &sie.StartupInfo);
+      DoCreateProcess(args.GetExecutable(), args.GetFullCommand(),
+                      EXTENDED_STARTUPINFO_PRESENT, &sie.StartupInfo,
+                      args.Job());
     } else
 #endif
     {
       STARTUPINFO si = {sizeof(si)};
-      DoCreateProcess(args.GetExecutable(),
-                      args.GetFullCommand(),
-                      0,
-                      &si);
+      DoCreateProcess(args.GetExecutable(), args.GetFullCommand(), 0, &si,
+                      args.Job());
     }
     break;
   }
