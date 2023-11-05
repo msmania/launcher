@@ -14,6 +14,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <shobjidl_core.h>
+#include <strsafe.h>
 
 void Log(LPCWSTR format, ...) {
   va_list v;
@@ -208,12 +209,16 @@ void DoCreateProcess(const wchar_t *executable, const std::wstring &command,
   command.copy(copied.get(), command.size());
   copied[command.size()] = 0;
 
+  // wchar_t env[] = L"PATH=D:\\MSWORK\\pub;%CommonProgramFiles%\\pub\0\0";
+  // creationFlags |= CREATE_UNICODE_ENVIRONMENT;
+  wchar_t* env = nullptr;
+
   PROCESS_INFORMATION pi = {};
   if (!CreateProcess(executable, copied.get(),
                      /*lpProcessAttributes*/ nullptr,
                      /*lpThreadAttributes*/ nullptr,
                      /*bInheritHandles*/ FALSE, creationFlags,
-                     /*lpEnvironment*/ nullptr,
+                     /*lpEnvironment*/ env,
                      /*lpCurrentDirectory*/ nullptr, si, &pi)) {
     Log(L"CreateProcess failed - %08x\n", GetLastError());
   }
@@ -250,6 +255,26 @@ int wmain(int argc, wchar_t *argv[]) {
 #ifndef DOWNLEVEL
   if (args.MitigationPolicy())
     SetProcessMitigationPolicy();
+#endif
+
+#if 1
+  auto env = std::make_unique<wchar_t[]>(50000);
+  int i = 0;
+  env[i++] = L'@';
+  for (i = 1; i < 5000; ++i) { env[i] = L'!'; }
+  env[i] = 0;
+  i = 1000;
+  env[i++] = L'%';
+  env[i++] = L'P';
+  env[i++] = L'A';
+  env[i++] = L'T';
+  env[i++] = L'H';
+  env[i++] = L'%';
+
+  if (!::SetEnvironmentVariable(L"PATH", env.get())) {
+    Log(L"SetEnvironmentVariable failed with %08x\n", ::GetLastError());
+    return 1;
+  }
 #endif
 
   switch (args.GetMethod()) {
